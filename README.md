@@ -6,6 +6,7 @@ This repository contains the necessary code to implement the proposed methodolog
 For the logistic link, it is necessary to install the BayesLogit package in R. This package is no longer available
 for download from CRAN, so we have provided the source files (BayesLogit_0.6.tar) for installation.
 
-The subfolder (Chlamydia data) contains files that creates a fake chlamydia data set (Create_Fake_Data_Set.txt),
-which is saved as (GT_Chlamydia_Data.csv), to mimic the Iowa group testing data set, and the necessary data 
-structuring code and runs a complete analysis of the data set (Data_Analysis.txt).
+This repository contains files that creates a fake buprenorphine maintenance treatment clinical trials data set 
+(Create_Fake_Data_Set.txt), which is saved as (opioid_data.csv), to mimic the buprenorphine maintence treatment
+efficacy and safety clinical trials dataset, and the necessary data structuring code,
+and runs a complete analysis of the data set (Data_Analysis.txt).
