@@ -1,0 +1,148 @@
+#############################################################################
+#############################################################################
+##### This script will create a fake buprenorphine maintenance treatment 
+##### clinical trials data set to mimic the efficacy and safety clinical 
+##### trials data set.
+#############################################################################
+#############################################################################
+
+## logit link function ##
+logit<-function(u){exp(u)/(1+exp(u))}
+
+m<-3000                 ## total number of patients
+K<-6                    ## number of clinical trials used in analysis
+nij<-20                 ## number of obsvs for each patient
+N<-nij*m                ## total number of observations
+t<-seq(.125,1.75,.125)  ## time points
+nijk<-length(t)         ## length of time frame
+
+## true parameter values ##
+beta.t<- -2*t^3         
+alpha.t<-c(1.25,-.4,0,.25,0,.5,0,.95,0,0)
+sig1.t<-1.25
+gam1.t<-rnorm(m,0,sqrt(sig1.t))
+sig2.t<-.75
+gam2.t<-rnorm(K,0,sqrt(sig2.t))
+
+##############################################
+## generate covariate data for each patient ##
+n.l<-lapply(1:m,function(i){nij})
+tr<-sample(1:K,size=m,replace=TRUE,prob=c(.25,.25,.15,.15,.1,.1))  ## trial id
+data<-matrix(-99,nrow=N,ncol=10)
+
+n<-n.l[[1]]
+id<-1:n
+## generate functional covariate ##
+set.seed(421)
+a=rnorm(1,5,1)
+dose=dbeta(seq(.125,2.5,.125),a,2)+.25
+## generate non-functional covariates ##
+X1<-rnorm(1,2,.5)
+X2<-rnorm(1,4,.5)
+X3<-rnorm(1,8,2)
+X4<-sample(x=c(1,2),size=1,prob=c(.7,.3)) 
+X5<-sample(x=c(1,2,3),size=1,prob=c(.6,.25,.15))
+X6<-sample(x=c(1,2,3,4),size=1,prob=c(.25,.3,.25,.2))
+data[id,1]<-1      ## patient id
+data[id,2]<-tr[1]  ## trial id
+data[id,3]<-1:n    ## visit number
+data[id,c(4:10)]<-cbind(dose,X1,X2,X3,X4,X5,X6)
+## repeat for i-th patient ## 
+for (i in 2:m){
+  pat<-i
+  n<-n.l[[i]]
+  prev<-sum(unlist(n.l[(i-1):1]))
+  id<-(prev+1):(prev+n)
+  ## generate functional covariate ##
+  a=rnorm(1,5,1)
+  dose=dbeta(seq(.125,2.5,.125),a,2)+.25
+  ## generate non-functional covariates ##
+  X1<-rnorm(1,2,.5)
+  X2<-rnorm(1,4,.5)
+  X3<-rnorm(1,8,2)
+  X4<-sample(x=c(1,2),size=1,prob=c(.7,.3)) 
+  X5<-sample(x=c(1,2,3),size=1,prob=c(.6,.25,.15))
+  X6<-sample(x=c(1,2,3,4),size=1,prob=c(.25,.3,.25,.2))
+  data[id,1]<-i    ## patient id
+  data[id,2]<-tr[i]  ## trial id
+  data[id,3]<-1:n    ## visit number
+  data[id,c(4:10)]<-cbind(dose,X1,X2,X3,X4,X5,X6)
+} 
+data<-as.data.frame(data)
+names(data)<-c("patient","trial","visit","dose","X1","X2","X3","X4","X5","X6")
+## add non-adherence to dose ##
+a=N*0.15 
+id=sample(1:N,size=a)
+data$dose[id]=0
+
+
+## re-structure data to generate individuals' true statuses ##
+data$X4=as.factor(data$X4)
+data$X5=as.factor(data$X5)
+data$X6=as.factor(data$X6)
+temp<-model.matrix(~X1+X2+X3+X4+X5+X6,data=data)
+data.num<-as.data.frame(cbind(data$patient,data$trial,data$dose,temp[,-1]));str(data.num)
+names(data.num)[1:3]=c("patient","trial","dose")
+Y.l=lapply(1:m,function(i){
+  id=which(data.num$patient==i)
+  patdat=data.num[id,]
+  
+  n=n.l[[i]]
+  tr=patdat$trial[1]
+  dose=patdat$dose
+  
+  t.id<-1:n
+  D.t<-matrix(-99,nrow=n,ncol=nijk)
+  for (j in 1:n){
+    if (t.id[j]==1){D.t[j,]<-0}
+    if (t.id[j]>1){
+      if (t.id[j]<=nijk){
+        prev<-(nijk-(t.id[j]-2)):nijk
+        D.t[j,prev]<-dose[1:(t.id[j]-1)]
+        D.t[j,-prev]<-0
+      }else{
+        D.t[j,]<-dose[(t.id[j]-nijk):(t.id[j]-1)]
+      }
+    }
+  }
+  integrand<-t(t(D.t)*beta.t)
+  H<-integrand[,-c(1,nijk)]
+  HH = 2*apply(H,1,sum)
+  h<-t[2]-t[1]
+  integral<-(h/2)*(integrand[,1]+HH+integrand[,nijk]) ## trapezoidal rule for integral term
+  xt=as.matrix(cbind(1,patdat[,-c(1:3)]))             ## add in global intercept
+  gam1=gam1.t[i]
+  gam2=gam2.t[tr]
+  xi=integral+xt%*%alpha.t+gam1+gam2
+  prob=logit(as.vector(xi))
+  Y=rbinom(n,1,prob)
+  Y
+})
+Y.t=unlist(Y.l)
+
+data$using=Y.t  ## add individuals' statuses back into original dataset
+
+## save as an excel file ##
+write.csv(data, file = "opioid_data.csv", row.names=FALSE)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
