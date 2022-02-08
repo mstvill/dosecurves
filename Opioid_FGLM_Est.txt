@@ -1,0 +1,187 @@
+FGLM.est<-function(X.l,M.l,Z1.l,Z2.l,Y.l,R,K,m,nijk,G=10000){
+  ## building the design matrices ##
+  X=X.l[[1]]
+  M=M.l[[1]]
+  Z1=Z1.l[[1]]
+  Z2<-Z2.l[[1]]
+  for (i in 2:m){
+    X=rbind(X,X.l[[i]])
+    M=rbind(M,M.l[[i]])
+    Z1<-bdiag(Z1,Z1.l[[i]])
+    Z2<-rbind(Z2,Z2.l[[i]])
+  }
+  
+  K.l<-lapply(1:m,function(i){Y.l[[i]]-1/2})
+  
+  
+  ## initializations ##
+  Q=dim(Z1.l[[1]])[2]
+  P=dim(X.l[[1]])[2]
+  J=dim(M.l[[1]])[2]
+  
+  eta=rep(0,J)     ## spline coefficients
+  
+  lam=0.1
+  a0_lam=3
+  b0_lam=1000
+  
+  alpha=rep(0,P)   ## fixed effects regression coefficients
+  tau=c(1000,rep(1,P-1))
+  inv.tau=1/tau
+  del=rep(0.1,P-1)
+  a0_del=1
+  b0_del=1
+  
+  gam1.l=lapply(1:m,function(i){rep(0,Q)})   ## subject-specific random effects
+  gam1=unlist(gam1.l) 
+  sig1=1
+  a0_1=.001
+  b0_1=.001
+  
+  gam2.l=lapply(1:K,function(i){rep(0,Q)})   ## trial-specific random effects
+  gam2=unlist(gam2.l)
+  sig2=2
+  a0_2=.005
+  b0_2=.005
+  
+  ## MCMC Setup ##
+  eta.mcmc=matrix(-99,nrow=G,ncol=J)
+  beta.mcmc=matrix(-99,nrow=G,ncol=nijk)
+  dose.mcmc=rep(-99,nrow=G)
+  lam.mcmc=rep(-99,G)
+  beta.grid.mcmc=matrix(-99,nrow=G,ncol=500)
+  
+  alpha.mcmc=matrix(-99,nrow=G,ncol=P)
+  inv.tau.mcmc = matrix(-99, nrow = G, ncol = P-1)
+  del.mcmc=matrix(-99,nrow=G,ncol=P-1)
+  
+  sig1.mcmc=rep(-99,G)
+  sig2.mcmc=rep(-99,G)
+  
+  mu.tau=rep(-99,P-1)
+  var.tau=rep(-99,P-1)
+  
+  ## update shape parameter for all parameters with gamma posterior ##
+  astar_lam=a0_lam + J/2
+  astar_del=a0_del+1
+  astar_1=a0_1+m/2
+  astar_2=a0_2+K/2
+  
+  ###############################
+  ## GIBBS SAMPLER STARTS HERE ##
+  for(g in 1:G){
+    inv.T=diag(inv.tau) 
+    Sigi=lam*R
+    
+    
+    ## sample and structure polya-gamma latent variables ##
+    W.l<-lapply(X=1:m, function(i){
+      n=n.l[[i]];
+      tr=tr.l[[i]];
+      rpg(n,1,(M.l[[i]]%*%eta+X.l[[i]]%*%alpha+gam1.l[[i]]+gam2.l[[tr]]))
+    })
+    add<-W.l[[1]]
+    if(n.l[[1]]>1) {W<-diag(add)}
+    if(n.l[[1]]==1){W<-add}
+    for(i in 2:m){
+      add<-W.l[[i]]
+      if(n.l[[i]]>1){W<-bdiag(W,diag(add))}
+      if(n.l[[i]]==1){W<-bdiag(W,add)}
+    }
+    
+    H.l<-lapply(1:m,function(i){K.l[[i]]/W.l[[i]]})
+    
+    ## sample and structure spline coefficients, eta, & dose effect ##
+    Us.l<-lapply(1:m,function(i){
+      n=n.l[[i]];
+      tr=tr.l[[i]];
+      H.l[[i]]-X.l[[i]]%*%alpha-gam1.l[[i]]-gam2.l[[tr]]
+    })
+    Us<-NULL
+    for(i in 1:m){
+      Us<-c(Us,Us.l[[i]])
+    }
+    Vb<-solve(t(M)%*%W%*%M+Sigi)
+    mb<-Vb%*%t(M)%*%W%*%Us
+    eta<-as.vector(rmvnorm(n=1,mean=mb,sigma=as.matrix(Vb)))
+    
+    beta<-B%*%eta
+    dose<-(1/2)*(beta[1]+2*sum(beta[2:(nijk-1)])+beta[nijk])
+    
+    ## sample and structure fixed effects, alpha ##
+    Us.l<-lapply(1:m,function(i){
+      n=n.l[[i]];
+      tr=tr.l[[i]];
+      H.l[[i]]-M.l[[i]]%*%eta-gam1.l[[i]]-gam2.l[[tr]]
+    })
+    Us<-NULL
+    for(i in 1:m){
+      Us<-c(Us,Us.l[[i]])
+    }
+    Vb<-solve(t(X)%*%W%*%X+inv.T)
+    mb<-Vb%*%t(X)%*%W%*%Us
+    alpha<-as.vector(rmvnorm(n=1,mean=mb,sigma=as.matrix(Vb)))
+    
+    ## sample and structure random effects, gam1 and gam2 ##
+    gam1.l<-lapply(1:m,function(i){
+      tr=tr.l[[i]];
+      Wt<-W.l[[i]];
+      Zt=as.matrix(Z1.l[[i]]);
+      Vb=solve(t(Zt*Wt)%*%Zt+(1/sig1));
+      mb=Vb%*%t(Zt*Wt)%*%(H.l[[i]]-M.l[[i]]%*%eta-X.l[[i]]%*%alpha-gam2.l[[tr]]);
+      as.vector(rmvnorm(n=1,mean=mb,sigma=as.matrix(Vb)))
+    })
+    gam1=unlist(gam1.l)
+    
+    Us.l<-lapply(1:m,function(i){H.l[[i]]-M.l[[i]]%*%eta-X.l[[i]]%*%alpha-gam1.l[[i]]})
+    Us<-NULL
+    for (i in 1:m){
+      Us<-c(Us,Us.l[[i]])
+    }
+    Vb=solve(t(Z2)%*%W%*%Z2+(1/sig2))
+    mb=Vb%*%t(Z2)%*%W%*%Us
+    gam2<-as.vector(rmvnorm(n=1,mean=mb,sigma=as.matrix(Vb)))
+    gam2.l=lapply(1:K,function(i){gam2[i]})
+
+    ## sample and structure hyperparameters tau and del ##
+    for (k in 2:P){
+      mu.tau[k-1] = sqrt((del[k-1]^2)/(alpha[k]^2))
+      var.tau[k-1] = (del[k-1])^2
+      inv.tau[k] = rinvgauss(1,mean=mu.tau[k-1],shape=var.tau[k-1])
+    }
+    for (k in 2:P){
+      bstar_del = abs(alpha[k])+b0_del
+      del[k-1] = rgamma(1,astar_del,bstar_del)
+    }
+
+    ## sample and structure random effects variance components ##
+    bstar_1=b0_1+0.5*t(gam1)%*%gam1
+    sig1=1/rgamma(1,shape=astar_1,rate=bstar_1)
+    
+    bstar_2=b0_2+0.5*t(gam2)%*%gam2
+    sig2=1/rgamma(1,shape=astar_2,rate=bstar_2)
+    
+    ## sample and structure spline smoothing hyperparameter, lam ##
+    bstar_lam=(1/b0_lam) + 0.5*t(eta)%*%R%*%eta
+    lam=rgamma(1,shape=astar_lam,scale=bstar_lam)
+    
+    ## save the sampled parameters ##
+    eta.mcmc[g,]=eta
+    beta.mcmc[g,]=beta
+    dose.mcmc[g]=dose
+    lam.mcmc[g]=lam
+    
+    alpha.mcmc[g,]=alpha
+    inv.tau.mcmc[g,]=inv.tau[-1]
+    del.mcmc[g,]=del
+    
+    sig1.mcmc[g]=sig1
+    sig2.mcmc[g]=sig2
+    
+    print(g)
+  } ## END GIBBS SAMPLING
+  
+  return(list("eta"=eta.mcmc, "beta"=beta.mcmc, "dose"=dose.mcmc, "lam"=lam.mcmc,
+              "alpha"=alpha.mcmc,"inv.tau"=inv.tau.mcmc, "del"=del.mcmc,
+              "sig1"=sig1.mcmc, "sig2"=sig2.mcmc))
+}
